@@ -2,8 +2,15 @@ package cmd
 
 import (
 	"fmt"
+	"os"
 
+	"github.com/cristianoliveira/sway-compat/pkg/cycle"
+	"github.com/cristianoliveira/sway-compat/pkg/ipc"
 	"github.com/spf13/cobra"
+)
+
+var (
+	quietFlag bool
 )
 
 var cycleCmd = &cobra.Command{
@@ -13,7 +20,7 @@ var cycleCmd = &cobra.Command{
 This command finds all windows with the same app_id or class as the currently
 focused window and cycles to the next one.`,
 	Run: func(cmd *cobra.Command, args []string) {
-		fmt.Println("cycle command - not yet implemented")
+		runCycleForward()
 	},
 }
 
@@ -21,7 +28,7 @@ var cycleForwardCmd = &cobra.Command{
 	Use:   "cycle-forward",
 	Short: "Cycle forward to next window of same app",
 	Run: func(cmd *cobra.Command, args []string) {
-		fmt.Println("cycle-forward command - not yet implemented")
+		runCycleForward()
 	},
 }
 
@@ -29,8 +36,64 @@ var cycleBackwardCmd = &cobra.Command{
 	Use:   "cycle-backward",
 	Short: "Cycle backward to previous window of same app",
 	Run: func(cmd *cobra.Command, args []string) {
-		fmt.Println("cycle-backward command - not yet implemented")
+		runCycleBackward()
 	},
+}
+
+func runCycleForward() {
+	// Create IPC client
+	client, err := ipc.NewClient()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: Failed to connect to Sway: %v\n", err)
+		os.Exit(1)
+	}
+	defer client.Close()
+
+	// Create cycle manager with default config
+	config := cycle.Config{
+		IdentifierPriority: []string{"app_id", "class", "instance"},
+		ExcludeScratchpad:  true,
+		ExcludeMinimized:   false,
+		WrapAround:         true,
+	}
+	manager := cycle.NewSimpleManager(client, config)
+
+	// Cycle forward
+	window, err := manager.CycleForward()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Printf("Focused window: %s (ID: %d)\n", window.Name, window.ID)
+}
+
+func runCycleBackward() {
+	// Create IPC client
+	client, err := ipc.NewClient()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: Failed to connect to Sway: %v\n", err)
+		os.Exit(1)
+	}
+	defer client.Close()
+
+	// Create cycle manager with default config
+	config := cycle.Config{
+		IdentifierPriority: []string{"app_id", "class", "instance"},
+		ExcludeScratchpad:  true,
+		ExcludeMinimized:   false,
+		WrapAround:         true,
+	}
+	manager := cycle.NewSimpleManager(client, config)
+
+	// Cycle backward
+	window, err := manager.CycleBackward()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Printf("Focused window: %s (ID: %d)\n", window.Name, window.ID)
 }
 
 func init() {
