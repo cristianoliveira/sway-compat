@@ -3,8 +3,14 @@ package cycle
 import (
 	"testing"
 
+	"github.com/cristianoliveira/sway-compat/internal/logger"
 	"github.com/cristianoliveira/sway-compat/pkg/ipc"
 )
+
+func init() {
+	// Initialize empty logger for tests
+	logger.SetDefaultLogger(&logger.EmptyLogger{})
+}
 
 // MockIPCManager is a mock implementation for testing
 type MockIPCManager struct {

@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"codeberg.org/scip/swayipc/v2"
+	"github.com/cristianoliveira/sway-compat/internal/logger"
 )
 
 // Client implements the Manager interface using swayipc
@@ -13,10 +14,16 @@ type Client struct {
 
 // NewClient creates a new IPC client
 func NewClient() (*Client, error) {
+	log := logger.GetDefaultLogger()
+	log.LogDebug("Connecting to Sway IPC")
+
 	client := swayipc.NewSwayIPC()
 	if err := client.Connect(); err != nil {
+		log.LogError("Failed to connect to Sway IPC", "error", err)
 		return nil, fmt.Errorf("failed to connect to sway: %w", err)
 	}
+
+	log.LogInfo("Successfully connected to Sway IPC")
 	return &Client{client: client}, nil
 }
 
@@ -36,14 +43,18 @@ func (c *Client) GetTree() (*Tree, error) {
 
 // GetFocusedWindow returns the currently focused window
 func (c *Client) GetFocusedWindow() (*WindowInfo, error) {
+	log := logger.GetDefaultLogger()
+	log.LogDebug("Getting focused window")
+
 	tree, err := c.client.GetTree()
 	if err != nil {
+		log.LogError("Failed to get tree", "error", err)
 		return nil, fmt.Errorf("failed to get tree: %w", err)
 	}
 
-	// Use swayipc's built-in FindFocused method
 	focusedNode := tree.FindFocused()
 	if focusedNode == nil {
+		log.LogError("No focused window found")
 		return nil, fmt.Errorf("no focused window found")
 	}
 
@@ -56,6 +67,12 @@ func (c *Client) GetFocusedWindow() (*WindowInfo, error) {
 		Focused:  focusedNode.Focused,
 		Visible:  focusedNode.Visible,
 	}
+
+	log.LogDebug("Found focused window",
+		"id", info.ID,
+		"name", info.Name,
+		"app_id", info.AppID,
+		"type", info.Type)
 
 	return info, nil
 }
@@ -72,7 +89,6 @@ func (c *Client) FocusWindow(id int64) error {
 
 // Subscribe subscribes to Sway events
 func (c *Client) Subscribe(events []string) (chan Event, error) {
-	// Create event subscription struct
 	sub := &swayipc.Event{}
 	for _, e := range events {
 		switch e {
@@ -85,7 +101,6 @@ func (c *Client) Subscribe(events []string) (chan Event, error) {
 		}
 	}
 
-	// Subscribe to events
 	_, err := c.client.Subscribe(sub)
 	if err != nil {
 		return nil, fmt.Errorf("failed to subscribe to events: %w", err)
@@ -93,7 +108,7 @@ func (c *Client) Subscribe(events []string) (chan Event, error) {
 
 	eventChan := make(chan Event, 10)
 
-	// Note: Full event loop implementation would go here
+	// TODO: Full event loop implementation would go here
 	// For now, return the channel (will be implemented when needed for daemon mode)
 
 	return eventChan, nil
@@ -121,15 +136,13 @@ func convertNode(node *swayipc.Node) *Tree {
 		Nodes:    make([]*Tree, len(node.Nodes)),
 	}
 
-	// Note: swayipc doesn't expose class/instance separately
+	// TODO: swayipc doesn't expose class/instance separately
 	// They would need to be extracted from other fields if available
 
-	// Recursively convert child nodes
 	for i, child := range node.Nodes {
 		tree.Nodes[i] = convertNode(child)
 	}
 
-	// Also include floating nodes
 	for _, floatingNode := range node.FloatingNodes {
 		tree.Nodes = append(tree.Nodes, convertNode(floatingNode))
 	}
@@ -161,7 +174,6 @@ func findFocused(tree *Tree) *WindowInfo {
 		return nil
 	}
 
-	// If this is a window (con or floating_con) and it's focused, return it
 	if (tree.Type == "con" || tree.Type == "floating_con") && tree.Focused && tree.Window > 0 {
 		return &WindowInfo{
 			ID:       tree.ID,
@@ -174,7 +186,6 @@ func findFocused(tree *Tree) *WindowInfo {
 		}
 	}
 
-	// Recursively search children
 	for _, child := range tree.Nodes {
 		if found := findFocused(child); found != nil {
 			return found
@@ -186,8 +197,10 @@ func findFocused(tree *Tree) *WindowInfo {
 
 // FindAllWindows returns all windows in the tree
 func FindAllWindows(tree *Tree) []WindowInfo {
+	log := logger.GetDefaultLogger()
 	var windows []WindowInfo
 	collectWindows(tree, &windows)
+	log.LogDebug("Found windows in tree", "count", len(windows))
 	return windows
 }
 
@@ -197,11 +210,7 @@ func collectWindows(tree *Tree, windows *[]WindowInfo) {
 		return
 	}
 
-	// If this is a container with a meaningful name, add it
-	// In Wayland/Sway, windows often have window=null, so we can't rely on Window ID
-	// Instead, check if it's a con/floating_con with either an app_id or a name
 	if (tree.Type == "con" || tree.Type == "floating_con") {
-		// Real windows have at least an app_id or a name
 		if tree.AppID != "" || tree.Class != "" || tree.Name != "" {
 			*windows = append(*windows, WindowInfo{
 				ID:       tree.ID,
@@ -215,7 +224,6 @@ func collectWindows(tree *Tree, windows *[]WindowInfo) {
 		}
 	}
 
-	// Recursively collect from children
 	for _, child := range tree.Nodes {
 		collectWindows(child, windows)
 	}

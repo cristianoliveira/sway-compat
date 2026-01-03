@@ -256,6 +256,63 @@ Sway:           $mod+Tab        → switch to previous window (when implemented)
 - Binary doesn't have execute permissions
 - Solution: `chmod +x sway-compat`
 
+### Debugging with Logs
+
+If you encounter issues with `sway-compat`, you can enable detailed logging using environment variables:
+
+- **SWAY_COMPAT_LOGS_PATH**: Set this to specify the path for log files. Default: `/tmp/sway-compat.log`
+- **SWAY_COMPAT_LOGS_LEVEL**: Set the logging level. Default: `DISABLED`. Options: `DEBUG`, `INFO`, `WARN`, `ERROR`
+
+#### Enable Debug Logging
+
+**Temporary (for one command):**
+```bash
+SWAY_COMPAT_LOGS_LEVEL=DEBUG sway-compat cycle-forward
+```
+
+**Persistent (in your shell):**
+```bash
+export SWAY_COMPAT_LOGS_LEVEL=DEBUG
+export SWAY_COMPAT_LOGS_PATH=/tmp/sway-compat.log
+```
+
+Add to `~/.bashrc` or `~/.zshrc` to make it permanent.
+
+**In Sway config:**
+```bash
+# Enable debug logging for cycle commands
+bindsym $mod+grave exec env SWAY_COMPAT_LOGS_LEVEL=DEBUG sway-compat cycle-forward
+```
+
+#### View Logs
+
+```bash
+# Watch logs in real-time
+tail -f /tmp/sway-compat.log
+
+# View recent logs
+cat /tmp/sway-compat.log
+```
+
+The logs will show:
+- IPC connection status
+- Window detection and matching
+- Cycling operations with window IDs and names
+- Any errors encountered
+
+#### Example Debug Output
+
+```
+time=2026-01-04T00:06:55.008+01:00 level=DEBUG msg="sway-compat starting"
+time=2026-01-04T00:06:55.009+01:00 level=DEBUG msg="Connecting to Sway IPC"
+time=2026-01-04T00:06:55.009+01:00 level=INFO msg="Successfully connected to Sway IPC"
+time=2026-01-04T00:06:55.009+01:00 level=DEBUG msg="Getting focused window"
+time=2026-01-04T00:06:55.009+01:00 level=DEBUG msg="Found focused window" id=7 name=Alacritty app_id=term-main
+time=2026-01-04T00:06:55.010+01:00 level=DEBUG msg="Current app identifier" identifier=term-main type=app_id
+time=2026-01-04T00:06:55.010+01:00 level=DEBUG msg="Found matching windows" count=3
+time=2026-01-04T00:06:55.010+01:00 level=INFO msg="Cycling to next window" from_id=7 to_id=14 to_name="Alacritty"
+```
+
 ## Architecture
 
 The project is organized into the following packages:
