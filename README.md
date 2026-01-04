@@ -24,7 +24,7 @@ Cycle through multiple windows of the **same application**. This is the behavior
 - Excludes scratchpad windows by default
 - Circular navigation (wraps around from last to first)
 
-### 2. Window Focus Stack (⏳ Planned)
+### 2. Window Focus Stack (✅ Implemented)
 **Origin: Most desktop environments** (Windows, KDE, GNOME, etc.)
 
 Traditional `Alt+Tab` behavior that switches between windows based on **recency of focus** (MRU - Most Recently Used). This maintains a stack of your window focus history and lets you toggle back and forth.
@@ -34,7 +34,12 @@ Traditional `Alt+Tab` behavior that switches between windows based on **recency 
 - Access recently used windows in order
 - More intuitive than Sway's workspace-based navigation for rapid context switching
 
-**Status:** Interface defined, implementation pending.
+**How it works:**
+- Background daemon tracks all window focus changes
+- Maintains persistent stack in BoltDB (survives restarts)
+- Toggle command switches to previous window instantly
+- Window validation ensures closed windows are skipped
+- Configurable exclusion/inclusion filters for app IDs
 
 ## Installation
 
@@ -142,9 +147,7 @@ Sway:   $mod+grave      → cycle through Firefox windows only
 
 ### Window Focus Stack (Alt+Tab-style)
 
-> **Note:** This feature is planned but not yet implemented. The commands below show the intended interface.
-
-This feature maintains a history of focused windows and lets you quickly toggle between them.
+This feature maintains a history of focused windows and lets you quickly toggle between them based on recency of use.
 
 #### Commands
 
@@ -152,6 +155,12 @@ This feature maintains a history of focused windows and lets you quickly toggle 
 ```bash
 sway-compat stack daemon
 ```
+
+The daemon supports several flags:
+- `--db-path <path>` - Custom database location (default: `~/.local/state/sway-compat-stack.bolt`)
+- `--stack-size <n>` - Maximum windows to track (default: 20)
+- `--exclude <apps>` - Comma-separated app IDs to exclude (e.g., `waybar,swaylock`)
+- `--include-only <apps>` - Only track these app IDs (comma-separated)
 
 **Toggle** between current and previous window:
 ```bash
@@ -168,7 +177,7 @@ sway-compat stack list
 sway-compat stack clear
 ```
 
-#### Example Scenario (When Implemented)
+#### Example Scenario
 
 Your window focus history:
 1. Terminal (current)
@@ -181,7 +190,9 @@ When you run `stack toggle`:
 - Second press → switches back to Terminal
 - Rapid toggling between your two most recent windows
 
-#### Sway Configuration (When Implemented)
+#### Sway Configuration
+
+Add to `~/.config/sway/config`:
 
 ```bash
 # Window focus stack (like Alt+Tab)
@@ -189,6 +200,17 @@ bindsym $mod+Tab exec sway-compat stack toggle
 
 # Start the daemon on Sway launch
 exec_always sway-compat stack daemon
+
+# Optional: Exclude certain apps from the stack
+# exec_always sway-compat stack daemon --exclude waybar,swaylock
+
+# Optional: Only track specific apps
+# exec_always sway-compat stack daemon --include-only firefox,Alacritty,code
+```
+
+After adding, reload Sway:
+```bash
+swaymsg reload
 ```
 
 #### Visual Reference
@@ -207,16 +229,16 @@ Sway:           $mod+Tab        → switch to previous window (when implemented)
 |---------|--------|----------------------|--------------|---------------------|
 | **Application Window Cycling** | macOS | `Cmd+\`` | `$mod+grave` | ✅ Implemented |
 | **Reverse App Cycling** | macOS | `Cmd+Shift+\`` | `$mod+Shift+grave` | ✅ Implemented |
-| **Focus Stack Toggle** | Windows/Linux | `Alt+Tab` | `$mod+Tab` | ⏳ Planned |
+| **Focus Stack Toggle** | Windows/Linux | `Alt+Tab` | `$mod+Tab` | ✅ Implemented |
 
 ### What Each Feature Does
 
 | You Want To... | Use This Feature | Command |
 |----------------|-----------------|---------|
 | Switch between 3 Firefox windows only | Application Cycling | `cycle-forward` |
-| Go back to your previous window (any app) | Focus Stack | `stack toggle` (planned) |
+| Go back to your previous window (any app) | Focus Stack | `stack toggle` |
 | Navigate multiple terminals without seeing other apps | Application Cycling | `cycle-forward` |
-| Quick toggle: Editor ↔ Browser | Focus Stack | `stack toggle` (planned) |
+| Quick toggle: Editor ↔ Browser | Focus Stack | `stack toggle` |
 
 ## Troubleshooting
 
@@ -244,6 +266,33 @@ Sway:           $mod+Tab        → switch to previous window (when implemented)
 **Cycling doesn't include all windows**
 - By default, scratchpad windows are excluded
 - Future versions will support configuration to customize this
+
+### Window Focus Stack
+
+**Error: "Not enough windows in stack to toggle"**
+- Stack has fewer than 2 windows
+- The daemon may not be running
+- Solution: Start the daemon with `sway-compat stack daemon`
+
+**Toggle doesn't work / daemon not tracking**
+- Daemon not running in background
+- Check if running: `ps aux | grep "sway-compat stack daemon"`
+- Solution: Add `exec_always sway-compat stack daemon` to Sway config
+
+**Stack doesn't persist after restart**
+- Database file may not have write permissions
+- Default location: `~/.local/state/sway-compat-stack.bolt`
+- Solution: Check directory exists and is writable: `mkdir -p ~/.local/state`
+
+**Wrong windows in stack**
+- Some apps are being tracked that shouldn't be
+- Solution: Use `--exclude` flag to filter out unwanted apps
+- Example: `sway-compat stack daemon --exclude waybar,swaylock`
+
+**Daemon uses too much memory**
+- Stack size may be too large
+- Solution: Reduce with `--stack-size` flag
+- Example: `sway-compat stack daemon --stack-size 10`
 
 ### General Issues
 
@@ -282,6 +331,9 @@ Add to `~/.bashrc` or `~/.zshrc` to make it permanent.
 ```bash
 # Enable debug logging for cycle commands
 bindsym $mod+grave exec env SWAY_COMPAT_LOGS_LEVEL=DEBUG sway-compat cycle-forward
+
+# Enable debug logging for the stack daemon
+exec_always env SWAY_COMPAT_LOGS_LEVEL=DEBUG sway-compat stack daemon
 ```
 
 #### View Logs
@@ -298,10 +350,13 @@ The logs will show:
 - IPC connection status
 - Window detection and matching
 - Cycling operations with window IDs and names
+- Stack daemon focus change events
+- Window push/toggle operations
 - Any errors encountered
 
 #### Example Debug Output
 
+**Cycle forward:**
 ```
 time=2026-01-04T00:06:55.008+01:00 level=DEBUG msg="sway-compat starting"
 time=2026-01-04T00:06:55.009+01:00 level=DEBUG msg="Connecting to Sway IPC"
@@ -313,15 +368,26 @@ time=2026-01-04T00:06:55.010+01:00 level=DEBUG msg="Found matching windows" coun
 time=2026-01-04T00:06:55.010+01:00 level=INFO msg="Cycling to next window" from_id=7 to_id=14 to_name="Alacritty"
 ```
 
+**Stack daemon:**
+```
+time=2026-01-04T00:10:23.001+01:00 level=INFO msg="Starting stack tracking daemon"
+time=2026-01-04T00:10:23.002+01:00 level=INFO msg="Stack daemon started successfully" db_path=/home/user/.local/state/sway-compat-stack.bolt stack_size=20
+time=2026-01-04T00:10:23.003+01:00 level=DEBUG msg="Event loop started"
+time=2026-01-04T00:10:25.120+01:00 level=DEBUG msg="Focus change detected" window_id=12345 window_name="Firefox" app_id=firefox
+time=2026-01-04T00:10:25.121+01:00 level=DEBUG msg="Pushing window to stack" window_id=12345 window_name="Firefox" app_id=firefox
+time=2026-01-04T00:10:25.122+01:00 level=INFO msg="Window pushed to stack" window_id=12345 stack_size=3
+```
+
 ## Architecture
 
 The project is organized into the following packages:
 
 - `cmd/` - CLI commands using Cobra framework
 - `pkg/ipc/` - Sway IPC communication (using swayipc library)
-- `pkg/stack/` - Window focus stack management (planned)
+- `pkg/stack/` - Window focus stack management (implemented)
 - `pkg/cycle/` - Application window cycling logic (implemented)
-- `pkg/storage/` - BoltDB storage for state persistence (planned)
+- `pkg/storage/` - BoltDB storage for state persistence (implemented)
+- `internal/logger/` - Structured logging with configurable levels
 
 ## Development
 
@@ -369,12 +435,17 @@ go build -o sway-compat
 - [x] Window matching logic
 - [x] Cycle commands (forward/backward)
 - [x] Unit tests for cycle functionality
-- [ ] Implement stack manager (Alt+Tab behavior)
-- [ ] BoltDB storage implementation
+- [x] Structured logging with debug support
+- [x] Implement stack manager (Alt+Tab behavior)
+- [x] BoltDB storage implementation
+- [x] Event loop for window focus tracking
+- [x] Stack daemon with signal handling
+- [x] Stack commands (toggle/list/clear)
+- [x] Comprehensive unit tests for stack
 - [ ] Configuration file support
 - [ ] Performance optimizations
-- [ ] Comprehensive integration tests
-- [ ] Documentation and examples
+- [ ] Integration tests
+- [ ] Advanced filtering and rules
 
 ## Contributing
 
@@ -392,6 +463,7 @@ Contributions are welcome! Please read the design documents in the `docs/` direc
 
 - [Sway](https://github.com/swaywm/sway) - The tiling Wayland compositor
 - [swayipc](https://codeberg.org/scip/swayipc) - Go library for Sway IPC communication
+- [BoltDB](https://github.com/etcd-io/bbolt) - Embedded key-value database for persistent storage
 - [i3-cycle](https://github.com/un-def/i3-cycle) - Similar cycling behavior for i3wm
 
 ## License
@@ -420,6 +492,7 @@ This tool bridges that gap, letting you enjoy Sway's tiling capabilities while k
 
 - Built with [Cobra](https://github.com/spf13/cobra) for CLI framework
 - Uses [swayipc](https://codeberg.org/scip/swayipc) for Sway IPC communication
+- Uses [BoltDB](https://github.com/etcd-io/bbolt) for persistent storage
 - Inspired by years of muscle memory from macOS and traditional desktop environments
 
 ## Support

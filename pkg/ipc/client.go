@@ -1,6 +1,7 @@
 package ipc
 
 import (
+	"encoding/json"
 	"fmt"
 
 	"codeberg.org/scip/swayipc/v2"
@@ -89,6 +90,9 @@ func (c *Client) FocusWindow(id int64) error {
 
 // Subscribe subscribes to Sway events
 func (c *Client) Subscribe(events []string) (chan Event, error) {
+	log := logger.GetDefaultLogger()
+	log.LogDebug("Subscribing to Sway events", "events", events)
+
 	sub := &swayipc.Event{}
 	for _, e := range events {
 		switch e {
@@ -103,14 +107,75 @@ func (c *Client) Subscribe(events []string) (chan Event, error) {
 
 	_, err := c.client.Subscribe(sub)
 	if err != nil {
+		log.LogError("Failed to subscribe to events", "error", err)
 		return nil, fmt.Errorf("failed to subscribe to events: %w", err)
 	}
 
 	eventChan := make(chan Event, 10)
 
-	// TODO: Full event loop implementation would go here
-	// For now, return the channel (will be implemented when needed for daemon mode)
+	// Start goroutine to run event loop
+	go func() {
+		defer close(eventChan)
+		log.LogDebug("Event loop started")
 
+		// Run the event loop with callback
+		err := c.client.EventLoop(func(rawEvent *swayipc.RawResponse) error {
+			// Only process window events for now
+			// PayloadType 0x80000003 is WINDOW event
+			// We'll unmarshal based on what was subscribed
+
+			var windowEvent swayipc.EventWindow
+			if err := json.Unmarshal(rawEvent.Payload, &windowEvent); err != nil {
+				log.LogError("Failed to unmarshal event", "error", err)
+				return nil // Don't stop event loop on unmarshal errors
+			}
+
+			// Convert to our Event type
+			event := Event{
+				Change: windowEvent.Change,
+			}
+
+			// Convert container if present
+			if windowEvent.Container != nil {
+				event.Container = &WindowInfo{
+					ID:       int64(windowEvent.Container.Id),
+					Name:     windowEvent.Container.Name,
+					AppID:    windowEvent.Container.X11Window, // X11Window is actually app_id
+					Type:     windowEvent.Container.Type,
+					Focused:  windowEvent.Container.Focused,
+					Visible:  windowEvent.Container.Visible,
+				}
+			}
+
+			log.LogDebug("Received event",
+				"change", event.Change,
+				"container_id", func() int64 {
+					if event.Container != nil {
+						return event.Container.ID
+					}
+					return 0
+				}())
+
+			// Forward event to our channel (non-blocking)
+			select {
+			case eventChan <- event:
+				// Event sent successfully
+			default:
+				// Channel buffer full, log warning
+				log.LogError("Event channel full, dropping event", "change", event.Change)
+			}
+
+			return nil // Continue event loop
+		})
+
+		if err != nil {
+			log.LogError("Event loop terminated with error", "error", err)
+		} else {
+			log.LogDebug("Event loop terminated normally")
+		}
+	}()
+
+	log.LogInfo("Successfully subscribed to Sway events")
 	return eventChan, nil
 }
 
