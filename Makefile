@@ -1,54 +1,66 @@
-.PHONY: build test clean install run help
+GOCACHE := $(CURDIR)/.cache/go-build
+GOLANGCI_LINT_CACHE := $(CURDIR)/.cache/golangci-lint
+BINARY := bin/sway-compat
 
-# Build the binary
-build:
-	go build -o sway-compat
+export GOCACHE
+export GOLANGCI_LINT_CACHE
 
-# Run tests
-test:
-	go test ./...
+.PHONY: help build run test test-coverage setup-ci fmt lint install clean tail-log tail-log-truncate
 
-# Run tests with coverage
-test-coverage:
-	go test -coverprofile=coverage.out ./...
-	go tool cover -html=coverage.out -o coverage.html
+help: ## Lists the available commands. Add '##' to describe a command.
+	@grep -E '^[a-zA-Z_-].+:.*?## .*$$' $(MAKEFILE_LIST)\
+		| sort\
+		| awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-25s\033[0m %s\n", $$1, $$2}'
 
-# Clean build artifacts
-clean:
-	rm -f sway-compat
-	rm -f coverage.out coverage.html
+build: ## Build the CLI
+	@echo "Building sway-compat..."
+	@mkdir -p $(dir $(BINARY))
+	@go build -o $(BINARY) main.go
 
-# Install the binary to /usr/local/bin
-install: build
-	sudo cp sway-compat /usr/local/bin/
+run: ## Run the CLI
+	@echo "Running sway-compat..."
+	@go run main.go
 
-# Run the CLI
-run:
-	go run main.go
+test: ## Run tests
+	@echo "Running tests..."
+	@go test ./... -v
 
-# Format code
-fmt:
-	go fmt ./...
+test-coverage: ## Run tests with coverage report
+	@echo "Running tests with coverage..."
+	@go test -coverprofile=coverage.out ./...
+	@go tool cover -html=coverage.out -o coverage.html
 
-# Run linter
-lint:
-	golangci-lint run
+setup-ci: ## Install dependencies for CI
+	@echo "Setting up CI dependencies..."
+	@mkdir -p $(GOCACHE) $(GOLANGCI_LINT_CACHE)
+	@if ! command -v golangci-lint >/dev/null 2>&1; then \
+		echo "golangci-lint not found, installing..."; \
+		go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.5.0; \
+	else \
+		echo "golangci-lint already installed"; \
+	fi
 
-# Build for multiple platforms
-build-all:
-	GOOS=linux GOARCH=amd64 go build -o sway-compat-linux-amd64
-	GOOS=linux GOARCH=arm64 go build -o sway-compat-linux-arm64
+fmt: setup-ci ## Format the code
+	@echo "Formatting code..."
+	@gofmt -s -w .
+	@golangci-lint run --fix
 
-# Show help
-help:
-	@echo "Available targets:"
-	@echo "  build         - Build the binary"
-	@echo "  test          - Run tests"
-	@echo "  test-coverage - Run tests with coverage report"
-	@echo "  clean         - Clean build artifacts"
-	@echo "  install       - Install binary to /usr/local/bin"
-	@echo "  run           - Run the CLI"
-	@echo "  fmt           - Format code"
-	@echo "  lint          - Run linter"
-	@echo "  build-all     - Build for multiple platforms"
-	@echo "  help          - Show this help message"
+lint: setup-ci ## Run the linter
+	@echo "Running linter..."
+	@golangci-lint run
+
+install: build ## Install the CLI to GOPATH/bin
+	@echo "Installing sway-compat..."
+	@go install ./...
+
+clean: ## Clean build artifacts
+	@echo "Cleaning artifacts..."
+	@rm -f $(BINARY) coverage.out coverage.html
+
+tail-log: ## Tail the log file
+	@echo "Tailing /tmp/sway-compat.log..."
+	@tail -f /tmp/sway-compat.log
+
+tail-log-truncate: ## Tail the log file and truncate it when it exceeds 10MB
+	@echo "Truncating and tailing /tmp/sway-compat.log..."
+	@truncate -s 0 /tmp/sway-compat.log && tail -f /tmp/sway-compat.log
