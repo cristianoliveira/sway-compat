@@ -166,9 +166,24 @@ swaymsg reload
 - Read [docs/CYCLE_USAGE.md](docs/CYCLE_USAGE.md) for advanced usage
 - Explore the design docs in `docs/` to understand how it works
 
+## Also Available: Window Focus Stack (Alt+Tab)
+
+The **Window Focus Stack** feature is now implemented! It provides traditional `Alt+Tab` behavior.
+
+**Quick setup:**
+```bash
+# Add to ~/.config/sway/config
+exec_always sway-compat daemon
+bindsym $mod+Tab exec sway-compat stack toggle
+
+# Reload Sway
+swaymsg reload
+```
+
+See the full [README.md](README.md) for complete documentation on the stack feature.
+
 ## Coming Soon
 
-- **Window Focus Stack** (`Alt+Tab` style switching)
 - **Configuration file** for customizing behavior
 - **Per-app rules** for fine-grained control
 

@@ -32,9 +32,10 @@ These documents outline the architecture and design decisions for each feature:
 
 - **[sway-stack.md](sway-stack.md)** - Window focus stack system design
   - Window stack management (Alt+Tab behavior)
-  - Event-driven architecture
-  - State persistence
-  - Daemon mode design
+  - IPC-based daemon architecture
+  - Event-driven with Unix domain socket
+  - JSON file storage with periodic persistence
+  - Daemon as single source of truth
 
 ### Development Setup
 - **[project-setup.md](project-setup.md)** - Development tools and setup
@@ -48,7 +49,7 @@ These documents outline the architecture and design decisions for each feature:
 | Feature | Status | Documentation |
 |---------|--------|---------------|
 | Application Window Cycling | ✅ Implemented | [CYCLE_USAGE.md](CYCLE_USAGE.md) |
-| Window Focus Stack | ⏳ Planned | [sway-stack.md](sway-stack.md) |
+| Window Focus Stack | ✅ Implemented | [sway-stack.md](sway-stack.md) |
 
 ## Reference Scripts
 

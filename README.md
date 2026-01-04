@@ -35,9 +35,11 @@ Traditional `Alt+Tab` behavior that switches between windows based on **recency 
 - More intuitive than Sway's workspace-based navigation for rapid context switching
 
 **How it works:**
-- Background daemon tracks all window focus changes
-- Maintains persistent stack in BoltDB (survives restarts)
-- Toggle command switches to previous window instantly
+- Background daemon tracks all window focus changes and runs an IPC server
+- Commands communicate with daemon via Unix domain socket (IPC)
+- Daemon maintains stack in memory (fast) and persists to JSON file (survives restarts)
+- Single source of truth: daemon owns all state, no race conditions
+- Toggle command switches to previous window instantly via IPC
 - Window validation ensures closed windows are skipped
 - Configurable exclusion/inclusion filters for app IDs
 
@@ -151,16 +153,18 @@ This feature maintains a history of focused windows and lets you quickly toggle 
 
 #### Commands
 
-**Start the daemon** (tracks focus history):
+**Start the daemon** (tracks focus history and runs IPC server):
 ```bash
-sway-compat stack daemon
+sway-compat daemon
 ```
 
 The daemon supports several flags:
-- `--db-path <path>` - Custom database location (default: `~/.local/state/sway-compat-stack.bolt`)
+- `--db-path <path>` - Custom storage location (default: `~/.local/state/sway-compat-stack.json`)
 - `--stack-size <n>` - Maximum windows to track (default: 20)
 - `--exclude <apps>` - Comma-separated app IDs to exclude (e.g., `waybar,swaylock`)
 - `--include-only <apps>` - Only track these app IDs (comma-separated)
+
+**Note:** The daemon must be running for stack commands (toggle/list/clear) to work, as they communicate with the daemon via IPC.
 
 **Toggle** between current and previous window:
 ```bash
@@ -199,13 +203,13 @@ Add to `~/.config/sway/config`:
 bindsym $mod+Tab exec sway-compat stack toggle
 
 # Start the daemon on Sway launch
-exec_always sway-compat stack daemon
+exec_always sway-compat daemon
 
 # Optional: Exclude certain apps from the stack
-# exec_always sway-compat stack daemon --exclude waybar,swaylock
+# exec_always sway-compat daemon --exclude waybar,swaylock
 
 # Optional: Only track specific apps
-# exec_always sway-compat stack daemon --include-only firefox,Alacritty,code
+# exec_always sway-compat daemon --include-only firefox,Alacritty,code
 ```
 
 After adding, reload Sway:
@@ -272,27 +276,29 @@ Sway:           $mod+Tab        → switch to previous window (when implemented)
 **Error: "Not enough windows in stack to toggle"**
 - Stack has fewer than 2 windows
 - The daemon may not be running
-- Solution: Start the daemon with `sway-compat stack daemon`
+- Solution: Start the daemon with `sway-compat daemon`
 
-**Toggle doesn't work / daemon not tracking**
+**Error: "Failed to connect to daemon"**
 - Daemon not running in background
-- Check if running: `ps aux | grep "sway-compat stack daemon"`
-- Solution: Add `exec_always sway-compat stack daemon` to Sway config
+- IPC socket doesn't exist
+- Check if running: `ps aux | grep "sway-compat daemon"`
+- Check socket: `ls -la $XDG_RUNTIME_DIR/sway-compat.sock` or `/tmp/sway-compat-$UID.sock`
+- Solution: Add `exec_always sway-compat daemon` to Sway config
 
 **Stack doesn't persist after restart**
-- Database file may not have write permissions
-- Default location: `~/.local/state/sway-compat-stack.bolt`
+- Storage file may not have write permissions
+- Default location: `~/.local/state/sway-compat-stack.json`
 - Solution: Check directory exists and is writable: `mkdir -p ~/.local/state`
 
 **Wrong windows in stack**
 - Some apps are being tracked that shouldn't be
 - Solution: Use `--exclude` flag to filter out unwanted apps
-- Example: `sway-compat stack daemon --exclude waybar,swaylock`
+- Example: `sway-compat daemon --exclude waybar,swaylock`
 
 **Daemon uses too much memory**
 - Stack size may be too large
 - Solution: Reduce with `--stack-size` flag
-- Example: `sway-compat stack daemon --stack-size 10`
+- Example: `sway-compat daemon --stack-size 10`
 
 ### General Issues
 
@@ -332,8 +338,8 @@ Add to `~/.bashrc` or `~/.zshrc` to make it permanent.
 # Enable debug logging for cycle commands
 bindsym $mod+grave exec env SWAY_COMPAT_LOGS_LEVEL=DEBUG sway-compat cycle-forward
 
-# Enable debug logging for the stack daemon
-exec_always env SWAY_COMPAT_LOGS_LEVEL=DEBUG sway-compat stack daemon
+# Enable debug logging for the daemon
+exec_always env SWAY_COMPAT_LOGS_LEVEL=DEBUG sway-compat daemon
 ```
 
 #### View Logs
@@ -368,11 +374,11 @@ time=2026-01-04T00:06:55.010+01:00 level=DEBUG msg="Found matching windows" coun
 time=2026-01-04T00:06:55.010+01:00 level=INFO msg="Cycling to next window" from_id=7 to_id=14 to_name="Alacritty"
 ```
 
-**Stack daemon:**
+**Daemon:**
 ```
-time=2026-01-04T00:10:23.001+01:00 level=INFO msg="Starting stack tracking daemon"
-time=2026-01-04T00:10:23.002+01:00 level=INFO msg="Stack daemon started successfully" db_path=/home/user/.local/state/sway-compat-stack.bolt stack_size=20
-time=2026-01-04T00:10:23.003+01:00 level=DEBUG msg="Event loop started"
+time=2026-01-04T00:10:23.001+01:00 level=INFO msg="Starting sway-compat daemon"
+time=2026-01-04T00:10:23.002+01:00 level=INFO msg="IPC server started" socket=/run/user/1000/sway-compat.sock
+time=2026-01-04T00:10:23.003+01:00 level=INFO msg="Daemon started successfully" db_path=/home/user/.local/state/sway-compat-stack.json socket_path=/run/user/1000/sway-compat.sock stack_size=20
 time=2026-01-04T00:10:25.120+01:00 level=DEBUG msg="Focus change detected" window_id=12345 window_name="Firefox" app_id=firefox
 time=2026-01-04T00:10:25.121+01:00 level=DEBUG msg="Pushing window to stack" window_id=12345 window_name="Firefox" app_id=firefox
 time=2026-01-04T00:10:25.122+01:00 level=INFO msg="Window pushed to stack" window_id=12345 stack_size=3
@@ -383,10 +389,16 @@ time=2026-01-04T00:10:25.122+01:00 level=INFO msg="Window pushed to stack" windo
 The project is organized into the following packages:
 
 - `cmd/` - CLI commands using Cobra framework
-- `pkg/ipc/` - Sway IPC communication (using swayipc library)
+  - `daemon.go` - Top-level daemon command (IPC server + event tracking)
+  - `stack.go` - Stack commands that communicate via IPC
+  - `cycle.go` - Cycle commands (direct Sway IPC)
+- `pkg/ipc/` - IPC communication
+  - Sway IPC client (using swayipc library)
+  - Daemon IPC server (Unix domain socket)
+  - Daemon IPC client (for stack commands)
 - `pkg/stack/` - Window focus stack management (implemented)
 - `pkg/cycle/` - Application window cycling logic (implemented)
-- `pkg/storage/` - BoltDB storage for state persistence (implemented)
+- `pkg/storage/` - JSON file storage for state persistence (implemented)
 - `internal/logger/` - Structured logging with configurable levels
 
 ## Development
@@ -409,13 +421,18 @@ go build -o sway-compat
 .
 ├── cmd/                    # CLI commands
 │   ├── root.go            # Root command
+│   ├── daemon.go          # Daemon command (IPC server + event tracking)
 │   ├── cycle.go           # Cycle commands
-│   └── stack.go           # Stack commands
+│   └── stack.go           # Stack commands (IPC clients)
 ├── pkg/                    # Reusable packages
-│   ├── ipc/               # Sway IPC client
+│   ├── ipc/               # IPC communication
+│   │   ├── client.go      # Sway IPC client
+│   │   ├── server.go      # Daemon IPC server
+│   │   ├── daemon_client.go # Daemon IPC client
+│   │   └── protocol.go    # IPC protocol types
 │   ├── stack/             # Stack manager
 │   ├── cycle/             # Cycle manager
-│   └── storage/           # BoltDB storage
+│   └── storage/           # JSON file storage
 ├── docs/                   # Documentation
 │   ├── project-setup.md   # Development setup
 │   ├── sway-cycle-app.md  # Cycle feature design
@@ -437,11 +454,14 @@ go build -o sway-compat
 - [x] Unit tests for cycle functionality
 - [x] Structured logging with debug support
 - [x] Implement stack manager (Alt+Tab behavior)
-- [x] BoltDB storage implementation
+- [x] JSON file storage implementation
 - [x] Event loop for window focus tracking
 - [x] Stack daemon with signal handling
 - [x] Stack commands (toggle/list/clear)
 - [x] Comprehensive unit tests for stack
+- [x] IPC architecture (daemon as server, commands as clients)
+- [x] Unix domain socket IPC protocol
+- [x] Top-level daemon command
 - [ ] Configuration file support
 - [ ] Performance optimizations
 - [ ] Integration tests
@@ -463,7 +483,6 @@ Contributions are welcome! Please read the design documents in the `docs/` direc
 
 - [Sway](https://github.com/swaywm/sway) - The tiling Wayland compositor
 - [swayipc](https://codeberg.org/scip/swayipc) - Go library for Sway IPC communication
-- [BoltDB](https://github.com/etcd-io/bbolt) - Embedded key-value database for persistent storage
 - [i3-cycle](https://github.com/un-def/i3-cycle) - Similar cycling behavior for i3wm
 
 ## License
@@ -492,7 +511,7 @@ This tool bridges that gap, letting you enjoy Sway's tiling capabilities while k
 
 - Built with [Cobra](https://github.com/spf13/cobra) for CLI framework
 - Uses [swayipc](https://codeberg.org/scip/swayipc) for Sway IPC communication
-- Uses [BoltDB](https://github.com/etcd-io/bbolt) for persistent storage
+- Uses Unix domain sockets for daemon-command IPC
 - Inspired by years of muscle memory from macOS and traditional desktop environments
 
 ## Support

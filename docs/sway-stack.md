@@ -2,53 +2,78 @@
 
 ## Overview
 
-This document outlines the design for a window stack management system for Sway WM, enabling stack-like navigation between recently focused windows (similar to `mod+Tab` behavior in other window managers).
+This document outlines the design and implementation of a window stack management system for Sway WM, enabling stack-like navigation between recently focused windows (similar to `Alt+Tab` behavior in traditional desktop environments).
 
-## Current Implementation
+## ✅ Current Implementation (IPC-Based Architecture)
 
 ### Components
 
-1. **`sway-focus-tracker.sh`** - Background daemon
-   - Subscribes to Sway IPC window events
-   - Maintains a stack of focused container IDs in `~/.local/state/sway-focus-stack.txt`
-   - Removes duplicates (most recent kept)
-   - Handles Sway restarts with retry logic
+1. **Daemon (`sway-compat daemon`)** - Single unified daemon
+   - Subscribes to Sway window focus events via swayipc
+   - Maintains in-memory stack of WindowInfo structures
+   - Runs Unix domain socket IPC server
+   - Handles requests from stack commands (toggle/list/clear)
+   - Persists stack to JSON file every 30 seconds
+   - Graceful shutdown with signal handling
 
-2. **`sway-stack.sh`** - Toggle script
-   - Bound to `$mod+Tab` in Sway config
-   - Swaps focus between current and previous window
-   - Rotates stack entries on toggle
-   - Validates window existence before focusing
+2. **IPC Server (`pkg/ipc/server.go`)** - Daemon's IPC server
+   - Listens on Unix domain socket (`$XDG_RUNTIME_DIR/sway-compat.sock`)
+   - Line-delimited JSON protocol
+   - Handles concurrent client connections
+   - Request types: TOGGLE, LIST, CLEAR, PUSH
 
-3. **State Management**
-   - Plain text file with one container ID per line
-   - Most recent window at top (line 1)
-   - Previous window at line 2
-   - Maximum 20 entries to prevent unbounded growth
+3. **Stack Commands** - Thin IPC clients
+   - `sway-compat stack toggle` - Switch to previous window
+   - `sway-compat stack list` - Show current stack
+   - `sway-compat stack clear` - Clear the stack
+   - All communicate with daemon via IPC client (`pkg/ipc/daemon_client.go`)
 
-### Current Architecture
+4. **Storage (`pkg/storage/storage.go`)** - JSON file persistence
+   - File path: `~/.local/state/sway-compat-stack.json`
+   - Simple JSON array of window IDs
+   - Unix file locking (flock) for safety
+   - Daemon owns storage, periodic saves (not per-operation)
+
+### Architecture
 
 ```
-┌─────────────┐     ┌─────────────────────┐     ┌─────────────────┐
-│   Sway WM   │────▶│ sway-focus-tracker  │────▶│ stack.txt       │
-│  (IPC)      │◀────│ (daemon)            │     │ (state file)    │
-└─────────────┘     └─────────────────────┘     └─────────────────┘
-        │                                              │
-        │           ┌─────────────────────┐           │
-        └──────────▶│   sway-stack.sh     │◀──────────┘
-                    │   (toggle script)   │
-                    └─────────────────────┘
+┌──────────────────────────────────────────────────────────────┐
+│                  sway-compat daemon                          │
+│                                                              │
+│  ┌──────────────┐    ┌──────────────┐    ┌───────────────┐ │
+│  │   Sway IPC   │───▶│    Stack     │───▶│   Storage     │ │
+│  │   Client     │    │   Manager    │    │ (JSON file)   │ │
+│  │  (swayipc)   │    │ (in-memory)  │    │   + flock     │ │
+│  └──────────────┘    └──────────────┘    └───────────────┘ │
+│                              │                              │
+│                              │                              │
+│  ┌────────────────────────────────────────────────────────┐ │
+│  │              IPC Server (Unix socket)                  │ │
+│  │           /run/user/1000/sway-compat.sock              │ │
+│  └────────────────────────────────────────────────────────┘ │
+└──────────────────────────────────────────────────────────────┘
+                             ▲
+                             │ IPC requests
+                             │ (JSON over socket)
+                             │
+                ┌────────────┴────────────┐
+                │                         │
+       ┌────────┴──────┐       ┌─────────┴────────┐
+       │ stack toggle  │       │   stack list     │
+       │ (IPC client)  │       │  (IPC client)    │
+       └───────────────┘       └──────────────────┘
 ```
 
-### Issues with Current Implementation
+## Architecture Benefits
 
-1. **Bash Complexity**: Error handling, temporary file management, and IPC parsing in bash is error-prone
-2. **Performance**: Multiple `jq` calls and file operations on each focus change
-3. **Reliability**: No proper process supervision; daemon may die without restart
-4. **Testing**: Difficult to unit test shell scripts
-5. **Maintenance**: Bash scripts are hard to maintain for complex logic
+1. **Single Source of Truth**: Daemon owns all state, no race conditions
+2. **Performance**: In-memory operations, no file I/O on every command
+3. **Reliability**: IPC ensures commands work only if daemon is running
+4. **Clean Separation**: Commands are thin clients, logic in daemon
+5. **Testability**: Well-defined interfaces, easy to mock
+6. **Maintainability**: Go code with proper error handling
 
-## Go CLI Design
+## Design Decisions
 
 ### Goals
 
@@ -141,86 +166,82 @@ type Config struct {
 }
 ```
 
-### Storage with BoltDB
+### Storage Implementation
 
-BoltDB provides ACID transactions and concurrent read access in a single file, making it ideal for window state storage without the complexity of SQLite.
+Simple JSON file storage with Unix file locking for concurrent access safety.
 
-#### Simple Schema
+#### JSON File Storage
 
 ```go
-// Single bucket for stack, storing window IDs as binary (no JSON)
-const bucketStack = "stack"
-
-type BoltStorage struct {
-    db *bolt.DB
+type FileStorage struct {
+    path string
+    log  logger.Logger
 }
 
-// Store just window IDs, not full WindowInfo
-func (b *BoltStorage) PushStack(windowID int64) error {
-    return b.db.Update(func(tx *bolt.Tx) error {
-        bucket := tx.Bucket([]byte(bucketStack))
-        
-        // Read current stack (max 20 IDs)
-        var stack []int64
-        if data := bucket.Get([]byte("ids")); data != nil {
-            // 8 bytes per int64
-            for i := 0; i < len(data); i += 8 {
-                stack = append(stack, int64(binary.LittleEndian.Uint64(data[i:i+8])))
-            }
-        }
-        
-        // Deduplicate and prepend
-        stack = removeID(stack, windowID)
-        stack = append([]int64{windowID}, stack...)
-        if len(stack) > 20 {
-            stack = stack[:20]
-        }
-        
-        // Store as binary (more efficient than JSON)
-        buf := make([]byte, 0, len(stack)*8)
-        for _, id := range stack {
-            var idBytes [8]byte
-            binary.LittleEndian.PutUint64(idBytes[:], uint64(id))
-            buf = append(buf, idBytes[:]...)
-        }
-        
-        return bucket.Put([]byte("ids"), buf)
-    })
-}
-
-func (b *BoltStorage) GetStack() ([]int64, error) {
-    var stack []int64
-    err := b.db.View(func(tx *bolt.Tx) error {
-        bucket := tx.Bucket([]byte(bucketStack))
-        data := bucket.Get([]byte("ids"))
-        if data == nil {
-            return nil
-        }
-        
-        for i := 0; i < len(data); i += 8 {
-            stack = append(stack, int64(binary.LittleEndian.Uint64(data[i:i+8])))
-        }
-        return nil
-    })
-    return stack, err
-}
-
-// Helper
-func removeID(ids []int64, target int64) []int64 {
-    result := make([]int64, 0, len(ids))
-    for _, id := range ids {
-        if id != target {
-            result = append(result, id)
-        }
+// PushStack adds window ID to the stack with file locking
+func (f *FileStorage) PushStack(windowID int64) error {
+    // Lock file for writing (exclusive lock)
+    file, err := f.lockFile(true)
+    if err != nil {
+        return err
     }
-    return result
+    defer f.unlockFile(file)
+
+    // Read current stack
+    stack := f.readStackFromFile(file)
+
+    // Remove duplicates
+    stack = removeID(stack, windowID)
+
+    // Prepend new ID
+    stack = append([]int64{windowID}, stack...)
+
+    // Trim to max size
+    if len(stack) > maxStackSize {
+        stack = stack[:maxStackSize]
+    }
+
+    // Write back
+    return f.writeStackToFile(file, stack)
+}
+
+// File locking using Unix flock
+func (f *FileStorage) lockFile(write bool) (*os.File, error) {
+    flags := os.O_RDONLY
+    if write {
+        flags = os.O_RDWR | os.O_CREATE
+    }
+
+    file, err := os.OpenFile(f.path, flags, 0644)
+    if err != nil {
+        return nil, err
+    }
+
+    // Apply file lock
+    lockType := syscall.LOCK_SH // Shared lock for reading
+    if write {
+        lockType = syscall.LOCK_EX // Exclusive lock for writing
+    }
+
+    if err := syscall.Flock(int(file.Fd()), lockType); err != nil {
+        file.Close()
+        return nil, err
+    }
+
+    return file, nil
 }
 ```
 
 #### File Location
 ```
-~/.local/state/sway-stack.bolt  # Simple, single-purpose database
+~/.local/state/sway-compat-stack.json  # Human-readable JSON array
 ```
+
+**Advantages:**
+- Human-readable (can inspect with `cat`)
+- Simple implementation
+- Unix flock provides process-safe locking
+- No database overhead
 
 ### API Design
 
@@ -249,87 +270,93 @@ type IPCManager interface {
 }
 ```
 
-## Implementation Plan
+## Implementation Status
 
-### Phase 1: Core Library
-1. **IPC client** for Sway JSON IPC
-2. **Stack management** with LRU cache
-3. **State persistence** with BoltDB embedded database
-4. **Basic CLI** with `daemon` and `toggle` commands
+### ✅ Phase 1: Core Library (Completed)
+- ✅ IPC client for Sway JSON IPC (using swayipc library)
+- ✅ Stack management with in-memory cache
+- ✅ State persistence with JSON file storage
+- ✅ Basic CLI with `daemon` and `stack` commands
+- ✅ IPC server for daemon-command communication
+- ✅ IPC client for stack commands
 
-### Phase 2: Enhanced Features
-1. **Window validation** before focusing
-2. **Structured logging** with rotation
-3. **Configuration file** support
-4. **Health checks** and self-monitoring
+### ✅ Phase 2: Enhanced Features (Completed)
+- ✅ Window validation before focusing
+- ✅ Structured logging with configurable levels
+- ✅ Graceful shutdown with signal handling
+- ✅ Periodic persistence (every 30 seconds)
+- ✅ Exclude/include app filters
 
-### Phase 3: Integration
-1. **Systemd service** files
-2. **Sway config** migration guide
-3. **Performance benchmarks**
-4. **Comprehensive testing**
-
-## Migration from Bash to Go
-
-### Step 1: Coexistence
-- Install Go binary alongside bash scripts
-- Update Sway config to use Go binary for `mod+Tab`
-- Keep bash tracker running during transition
-
-### Step 2: Parallel Operation
-- Go binary reads existing stack file format
-- Both systems can operate independently
-- Compare behavior and fix discrepancies
-
-### Step 3: Full Migration
-- Remove bash scripts from startup
-- Update documentation
-- Clean up old state files
+### 🔄 Phase 3: Future Enhancements
+- [ ] Configuration file support (YAML/TOML)
+- [ ] Systemd service files
+- [ ] Per-workspace stack support
+- [ ] Advanced filtering rules
 
 ## Configuration Examples
 
 ### Sway Config
 ```bash
-# Replace existing binding
-bindsym $mod+Tab exec sway-stack toggle
+# Window focus stack (Alt+Tab style)
+bindsym $mod+Tab exec sway-compat stack toggle
 
-# Optional: Start daemon from sway config
-exec_always sway-stack daemon --config ~/.config/sway-stack.yaml
+# Start daemon on Sway launch
+exec_always sway-compat daemon
+
+# Optional: With custom settings
+# exec_always sway-compat daemon --stack-size 10 --exclude waybar,swaylock
+
+# Optional: Enable debug logging
+# exec_always env SWAY_COMPAT_LOGS_LEVEL=DEBUG sway-compat daemon
 ```
 
-### Config File (`~/.config/sway-stack.yaml`)
-```yaml
-stack_size: 20
-db_path: ~/.local/state/sway-state.bolt
-log_level: info
-log_file: ~/.local/state/sway-stack.log
+### Command-Line Flags
 
-# Optional window filters
-exclude_apps:
-  - "org.wezfurlong.wezterm"
-  - "Alacritty"
-  
-include_only:
-  - "brave-browser"
-  - "code"
+**Daemon:**
+```bash
+sway-compat daemon [flags]
+
+Flags:
+  --db-path string         Path to stack file (default: ~/.local/state/sway-compat-stack.json)
+  --stack-size int         Maximum windows to track (default: 20)
+  --exclude strings        App IDs to exclude (comma-separated)
+  --include-only strings   Only track these app IDs (comma-separated)
 ```
 
-### Systemd Service (`~/.config/systemd/user/sway-stack.service`)
+**Stack commands:**
+```bash
+sway-compat stack toggle    # Switch to previous window
+sway-compat stack list      # Show current stack
+sway-compat stack clear     # Clear the stack
+```
+
+### Systemd Service (Optional)
+
+`~/.config/systemd/user/sway-compat-daemon.service`
 ```ini
 [Unit]
-Description=Sway Stack Manager
+Description=Sway Compat Daemon (Window Stack Manager)
 After=graphical-session.target
 PartOf=graphical-session.target
 
 [Service]
 Type=simple
-ExecStart=%h/.local/bin/sway-stack daemon
+ExecStart=%h/.local/bin/sway-compat daemon
 Restart=on-failure
 RestartSec=5
+Environment="SWAY_COMPAT_LOGS_LEVEL=INFO"
 
 [Install]
 WantedBy=default.target
 ```
+
+Enable with:
+```bash
+systemctl --user enable sway-compat-daemon.service
+systemctl --user start sway-compat-daemon.service
+```
+
+**Note:** Most users prefer `exec_always` in Sway config over systemd services.
 
 ## Performance Considerations
 
@@ -374,15 +401,27 @@ WantedBy=default.target
 4. **CPU**: <1% average usage
 5. **User satisfaction**: Natural feel similar to other WM toggle behavior
 
-## Next Steps
+## Implementation Checklist
 
-1. [ ] Create Go project structure
-2. [ ] Implement basic IPC client
-3. [ ] Implement stack manager
-4. [ ] Create CLI skeleton
-5. [ ] Add configuration management
-6. [ ] Write migration tool from bash format
-7. [ ] Create test suite
-8. [ ] Benchmark against bash implementation
-9. [ ] Document installation and usage
-10. [ ] Create systemd service files
+### ✅ Completed
+- [x] Create Go project structure
+- [x] Implement Sway IPC client (using swayipc library)
+- [x] Implement stack manager with in-memory cache
+- [x] Create CLI with Cobra framework
+- [x] JSON file storage with Unix file locking
+- [x] Create comprehensive test suite
+- [x] Document installation and usage
+- [x] IPC server for daemon
+- [x] IPC client for stack commands
+- [x] Window validation before focus
+- [x] Graceful shutdown handling
+- [x] Exclude/include app filters
+- [x] Periodic persistence strategy
+
+### 🔄 Future Work
+- [ ] Configuration file support (YAML/TOML)
+- [ ] Systemd service templates
+- [ ] Per-workspace stack support
+- [ ] Advanced filtering and rules engine
+- [ ] Performance metrics and monitoring
+- [ ] Integration tests with containerized Sway
