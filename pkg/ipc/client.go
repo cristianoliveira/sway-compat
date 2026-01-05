@@ -107,6 +107,63 @@ func (c *Client) RunCommand(cmd string) error {
 	return nil
 }
 
+// GetWindowInfo returns detailed window information including workspace
+func (c *Client) GetWindowInfo(id int64) (*WindowInfo, error) {
+	c.log.LogDebug("Getting window info", "window_id", id)
+
+	tree, err := c.commandClient.GetTree()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get tree: %w", err)
+	}
+
+	// Convert to our Tree type and search
+	ourTree := convertNode(tree)
+	return findWindowInTree(ourTree, id), nil
+}
+
+// findWindowInTree recursively searches for a window by ID in the tree with workspace propagation
+func findWindowInTree(tree *Tree, id int64) *WindowInfo {
+	return findWindowInTreeHelper(tree, id, "")
+}
+
+// findWindowInTreeHelper recursively searches for a window by ID, tracking current workspace
+func findWindowInTreeHelper(tree *Tree, id int64, currentWorkspace string) *WindowInfo {
+	if tree == nil {
+		return nil
+	}
+
+	// Update current workspace if this node has one
+	workspace := currentWorkspace
+	if tree.Workspace != "" {
+		workspace = tree.Workspace
+	}
+
+	// Check if this node is the window we're looking for
+	if tree.ID == id && (tree.Type == "con" || tree.Type == "floating_con") {
+		return &WindowInfo{
+			ID:         tree.ID,
+			Name:       tree.Name,
+			AppID:      tree.AppID,
+			Class:      tree.Class,
+			Instance:   tree.Instance,
+			Type:       tree.Type,
+			Focused:    tree.Focused,
+			Workspace:  workspace,
+			Scratchpad: tree.Scratchpad,
+			Floating:   tree.Floating,
+		}
+	}
+
+	// Search children
+	for _, child := range tree.Nodes {
+		if found := findWindowInTreeHelper(child, id, workspace); found != nil {
+			return found
+		}
+	}
+
+	return nil
+}
+
 // Subscribe subscribes to Sway events
 func (c *Client) Subscribe(events []string) (chan Event, error) {
 	c.log.LogDebug("Subscribing to Sway events", "events", events)
@@ -211,14 +268,20 @@ func convertNode(node *swayipc.Node) *Tree {
 		return nil
 	}
 
+	// Determine workspace: workspace nodes have name as workspace, others may have current_workspace
+	workspace := node.Current_workspace
+	if node.Type == "workspace" {
+		workspace = node.Name
+	}
 	tree := &Tree{
-		ID:      int64(node.Id),
-		Name:    node.Name,
-		Type:    node.Type,
-		Focused: node.Focused,
-		AppID:   node.X11Window, // X11Window is actually the app_id field
-		Window:  int64(node.Window),
-		Nodes:   make([]*Tree, len(node.Nodes)),
+		ID:        int64(node.Id),
+		Name:      node.Name,
+		Type:      node.Type,
+		Focused:   node.Focused,
+		AppID:     node.X11Window, // X11Window is actually the app_id field
+		Window:    int64(node.Window),
+		Workspace: workspace,
+		Nodes:     make([]*Tree, len(node.Nodes)),
 	}
 
 	// TODO: swayipc doesn't expose class/instance separately

@@ -22,6 +22,9 @@ type Manager interface {
 	// RunCommand runs a Sway command
 	RunCommand(cmd string) error
 
+	// GetWindowInfo returns detailed window information including workspace
+	GetWindowInfo(id int64) (*WindowInfo, error)
+
 	// Close closes the IPC connection
 	Close() error
 }

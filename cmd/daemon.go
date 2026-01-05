@@ -143,29 +143,34 @@ func runDaemon(cmd *cobra.Command, args []string) {
 			// Only track "focus" change events
 			if event.Change == "focus" {
 				if event.Container != nil {
+					// Enrich window info with workspace data
+					enrichedWindow := enrichWindowInfo(event.Container, swayClient, log)
+
 					log.LogDebug("Focus change detected",
-						"window_id", event.Container.ID,
-						"window_name", event.Container.Name,
-						"app_id", event.Container.AppID,
-						"workspace", event.Container.Workspace,
-						"scratchpad", event.Container.Scratchpad,
-						"floating", event.Container.Floating)
+						"window_id", enrichedWindow.ID,
+						"window_name", enrichedWindow.Name,
+						"app_id", enrichedWindow.AppID,
+						"workspace", enrichedWindow.Workspace,
+						"scratchpad", enrichedWindow.Scratchpad,
+						"floating", enrichedWindow.Floating)
 
 					// Push to stack
-					manager.Push(*event.Container)
+					manager.Push(*enrichedWindow)
 
 					// Scratchpad focus handling
 					if daemonScratchpadFocusEnabled && prevWindow != nil {
 						// Debounce check
 						debounceInterval := time.Duration(daemonScratchpadDebounce) * time.Millisecond
 						if time.Since(lastScratchpadAction) > debounceInterval {
-							handleScratchpadFocus(prevWindow, event.Container, swayClient, log)
+							// Enrich previous window info if needed
+							enrichedPrev := enrichWindowInfo(prevWindow, swayClient, log)
+							handleScratchpadFocus(enrichedPrev, enrichedWindow, swayClient, log)
 							lastScratchpadAction = time.Now()
 						}
 					}
 
 					// Update previous window
-					prevWindow = event.Container
+					prevWindow = enrichedWindow
 				} else {
 					log.LogDebug("Focus event with no container", "change", event.Change)
 				}
@@ -195,6 +200,42 @@ func runDaemon(cmd *cobra.Command, args []string) {
 	}
 }
 
+// enrichWindowInfo queries the tree to get workspace and other missing fields for a window
+func enrichWindowInfo(window *ipc.WindowInfo, swayClient ipc.Manager, log logger.Logger) *ipc.WindowInfo {
+	if window == nil {
+		return nil
+	}
+
+	// If window already has workspace info, return as-is
+	if window.Workspace != "" {
+		return window
+	}
+
+	// Query tree for window info
+	enriched, err := swayClient.GetWindowInfo(window.ID)
+	if err != nil {
+		log.LogError("Failed to get window info for enrichment", "error", err, "window_id", window.ID)
+		return window // Return original on error
+	}
+
+	if enriched != nil {
+		// Preserve scratchpad and floating from original window (event container is authoritative)
+		enriched.Scratchpad = window.Scratchpad
+		enriched.Floating = window.Floating
+		log.LogDebug("Enriched window info",
+			"window_id", window.ID,
+			"original_workspace", window.Workspace,
+			"enriched_workspace", enriched.Workspace,
+			"original_floating", window.Floating,
+			"enriched_floating", enriched.Floating,
+			"original_scratchpad", window.Scratchpad,
+			"enriched_scratchpad", enriched.Scratchpad)
+		return enriched
+	}
+
+	return window
+}
+
 // handleScratchpadFocus implements the scratchpad focus behavior described in docs/sway-scratchpad-focus.md
 func handleScratchpadFocus(prev, curr *ipc.WindowInfo, swayClient ipc.Manager, log logger.Logger) {
 	log.LogDebug("Scratchpad focus check",
@@ -219,8 +260,18 @@ func handleScratchpadFocus(prev, curr *ipc.WindowInfo, swayClient ipc.Manager, l
 		return
 	}
 
-	// Check workspace match
+	// Require workspace information and ensure both windows share it
+	if prev.Workspace == "" || curr.Workspace == "" {
+		log.LogDebug("Skipping scratchpad focus due to missing workspace information",
+			"prev_workspace", prev.Workspace,
+			"curr_workspace", curr.Workspace)
+		return
+	}
+
 	if prev.Workspace != curr.Workspace {
+		log.LogDebug("Skipping scratchpad focus due to workspace mismatch",
+			"prev_workspace", prev.Workspace,
+			"curr_workspace", curr.Workspace)
 		return
 	}
 

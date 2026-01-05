@@ -16,11 +16,11 @@ func init() {
 
 // MockIPCClient is a mock implementation of ipc.Manager
 type MockIPCClient struct {
-	windows       map[int64]*ipc.WindowInfo
-	focusedID     int64
-	focusError    error
-	getTreeError  error
-	mu            sync.RWMutex
+	windows      map[int64]*ipc.WindowInfo
+	focusedID    int64
+	focusError   error
+	getTreeError error
+	mu           sync.RWMutex
 }
 
 func NewMockIPCClient() *MockIPCClient {
@@ -98,6 +98,18 @@ func (m *MockIPCClient) GetFocusedWindow() (*ipc.WindowInfo, error) {
 	return w, nil
 }
 
+func (m *MockIPCClient) GetWindowInfo(id int64) (*ipc.WindowInfo, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	w, exists := m.windows[id]
+	if !exists {
+		return nil, fmt.Errorf("window %d not found", id)
+	}
+
+	return w, nil
+}
+
 func (m *MockIPCClient) FocusWindow(id int64) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -111,6 +123,10 @@ func (m *MockIPCClient) FocusWindow(id int64) error {
 	}
 
 	m.focusedID = id
+	return nil
+}
+
+func (m *MockIPCClient) RunCommand(cmd string) error {
 	return nil
 }
 
@@ -185,14 +201,14 @@ func (m *MockStorage) ClearStack() error {
 }
 
 // Generic Storage interface methods (not used in stack manager)
-func (m *MockStorage) Open(path string) error                         { return nil }
-func (m *MockStorage) OpenReadOnly(path string) error                 { return nil }
-func (m *MockStorage) Close() error                                   { return nil }
-func (m *MockStorage) Get(bucket, key string) ([]byte, error)         { return nil, nil }
-func (m *MockStorage) Put(bucket, key string, value []byte) error     { return nil }
-func (m *MockStorage) Delete(bucket, key string) error                { return nil }
-func (m *MockStorage) List(bucket string) (map[string][]byte, error)  { return nil, nil }
-func (m *MockStorage) CreateBucket(bucket string) error               { return nil }
+func (m *MockStorage) Open(path string) error                        { return nil }
+func (m *MockStorage) OpenReadOnly(path string) error                { return nil }
+func (m *MockStorage) Close() error                                  { return nil }
+func (m *MockStorage) Get(bucket, key string) ([]byte, error)        { return nil, nil }
+func (m *MockStorage) Put(bucket, key string, value []byte) error    { return nil }
+func (m *MockStorage) Delete(bucket, key string) error               { return nil }
+func (m *MockStorage) List(bucket string) (map[string][]byte, error) { return nil, nil }
+func (m *MockStorage) CreateBucket(bucket string) error              { return nil }
 
 // Tests
 

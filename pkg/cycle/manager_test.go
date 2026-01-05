@@ -36,6 +36,17 @@ func (m *MockIPCManager) FocusWindow(id int64) error {
 	return nil
 }
 
+func (m *MockIPCManager) RunCommand(cmd string) error {
+	return nil
+}
+
+func (m *MockIPCManager) GetWindowInfo(id int64) (*ipc.WindowInfo, error) {
+	if m.focusedWindow != nil && m.focusedWindow.ID == id {
+		return m.focusedWindow, nil
+	}
+	return nil, nil
+}
+
 func (m *MockIPCManager) Subscribe(events []string) (chan ipc.Event, error) {
 	return make(chan ipc.Event), nil
 }
@@ -134,10 +145,10 @@ func TestMatcher_ExtractIdentifier(t *testing.T) {
 	matcher := NewMatcher(config)
 
 	tests := []struct {
-		name             string
-		window           ipc.WindowInfo
-		expectedID       string
-		expectedType     string
+		name         string
+		window       ipc.WindowInfo
+		expectedID   string
+		expectedType string
 	}{
 		{
 			name: "app_id priority",
