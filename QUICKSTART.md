@@ -182,6 +182,18 @@ swaymsg reload
 
 See the full [README.md](README.md) for complete documentation on the stack feature.
 
+## Scratchpad Focus Handling (macOS/AeroSpace-style)
+
+The **Scratchpad Focus Handling** feature automatically hides scratchpad windows when you focus tiling windows in the same workspace, similar to macOS/AeroSpace behavior.
+
+**Quick setup:**
+```bash
+# Add to ~/.config/sway/config
+exec_always sway-compat daemon --scratchpad-focus
+```
+
+See the full [README.md](README.md) for configuration options.
+
 ## Coming Soon
 
 - **Configuration file** for customizing behavior

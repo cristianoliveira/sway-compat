@@ -98,6 +98,15 @@ func (c *Client) FocusWindow(id int64) error {
 	return nil
 }
 
+// RunCommand runs a Sway command
+func (c *Client) RunCommand(cmd string) error {
+	_, err := c.commandClient.RunGlobalCommand(cmd)
+	if err != nil {
+		return fmt.Errorf("failed to run command %q: %w", cmd, err)
+	}
+	return nil
+}
+
 // Subscribe subscribes to Sway events
 func (c *Client) Subscribe(events []string) (chan Event, error) {
 	c.log.LogDebug("Subscribing to Sway events", "events", events)
@@ -144,27 +153,12 @@ func (c *Client) Subscribe(events []string) (chan Event, error) {
 			// PayloadType 0x80000003 is WINDOW event
 			// We'll unmarshal based on what was subscribed
 
-			var windowEvent swayipc.EventWindow
-			if err := json.Unmarshal(rawEvent.Payload, &windowEvent); err != nil {
-				c.log.LogError("Failed to unmarshal event", "error", err)
-				return nil // Don't stop event loop on unmarshal errors
-			}
+			c.log.LogDebug("Raw event received", "payload_type", rawEvent.PayloadType, "payload_length", len(rawEvent.Payload))
 
-			// Convert to our Event type
-			event := Event{
-				Change: windowEvent.Change,
-			}
-
-			// Convert container if present
-			if windowEvent.Container != nil {
-				event.Container = &WindowInfo{
-					ID:      int64(windowEvent.Container.Id),
-					Name:    windowEvent.Container.Name,
-					AppID:   windowEvent.Container.X11Window, // X11Window is actually app_id
-					Type:    windowEvent.Container.Type,
-					Focused: windowEvent.Container.Focused,
-					Visible: windowEvent.Container.Visible,
-				}
+			event, err := parseWindowEvent(rawEvent.Payload)
+			if err != nil {
+				c.log.LogError("Failed to parse window event", "error", err)
+				return nil // Don't stop event loop on parse errors
 			}
 
 			c.log.LogDebug("Received event",
@@ -254,9 +248,49 @@ func convertNodeToWindowInfo(node *swayipc.Node) *WindowInfo {
 		Type:    node.Type,
 		Focused: node.Focused,
 		Visible: node.Visible,
+		// Workspace, Scratchpad, Floating will be populated elsewhere
 	}
 
 	return info
+}
+
+// parseWindowEvent parses raw window event JSON and returns Event with enriched WindowInfo
+func parseWindowEvent(payload []byte) (Event, error) {
+	log := logger.GetDefaultLogger()
+
+	var event struct {
+		Change    string          `json:"change"`
+		Container json.RawMessage `json:"container"`
+	}
+	if err := json.Unmarshal(payload, &event); err != nil {
+		log.LogError("Failed to unmarshal window event JSON", "error", err, "payload", string(payload))
+		return Event{}, fmt.Errorf("failed to unmarshal event: %w", err)
+	}
+
+	result := Event{
+		Change: event.Change,
+	}
+
+	if len(event.Container) > 0 {
+		var container WindowInfo
+		if err := json.Unmarshal(event.Container, &container); err != nil {
+			log.LogError("Failed to unmarshal container JSON", "error", err, "container", string(event.Container))
+			return Event{}, fmt.Errorf("failed to unmarshal container: %w", err)
+		}
+		log.LogDebug("Parsed window event container",
+			"change", event.Change,
+			"id", container.ID,
+			"name", container.Name,
+			"app_id", container.AppID,
+			"workspace", container.Workspace,
+			"scratchpad", container.Scratchpad,
+			"floating", container.Floating)
+		result.Container = &container
+	} else {
+		log.LogDebug("Window event has no container", "change", event.Change)
+	}
+
+	return result, nil
 }
 
 // findFocused recursively searches for the focused window in the tree

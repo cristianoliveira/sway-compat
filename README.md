@@ -27,6 +27,7 @@ macOS-style application window cycling and MRU-style focus stack for the Sway ti
 
 - **Application Window Cycling** (Cmd+apostrophe - `mod+``): cycle through only the windows of the currently focused application.
 - **Window Focus Stack** (`Alt+Tab`-style): toggle between the two most recent windows or walk a MRU stack.
+- **Scratchpad Focus Handling**: macOS/AeroSpace-style auto-hide scratchpad when focusing tiling windows.
 - Excludes scratchpad windows by default, uses Sway IPC directly, and provides a daemon for instant MRU toggling.
 
 ## Basic Usage
@@ -70,6 +71,34 @@ Useful flags:
 - `--stack-size <n>`: limit tracked windows (default `20`)
 - `--exclude <apps>` / `--include-only <apps>`: comma-separated filters for app IDs
 
+### Scratchpad Focus Handling
+
+Replicate macOS/AeroSpace behavior where scratchpad windows automatically hide when you focus a tiling window in the same workspace:
+
+```bash
+# Enable scratchpad focus handling with daemon
+sway-compat daemon --scratchpad-focus
+
+# Optional configuration
+sway-compat daemon --scratchpad-focus \
+  --scratchpad-hide-action hide-scratchpad \
+  --scratchpad-workspace .scratchpad \
+  --scratchpad-debounce 200
+```
+
+**Behavior:**
+- When a floating scratchpad window loses focus to a tiling window in the same workspace
+- The tiling window is brought to front (re-focused)
+- The scratchpad window is moved back to the scratchpad workspace (if configured)
+
+**Flags:**
+- `--scratchpad-focus`: enable the feature (default: `false`)
+- `--scratchpad-hide-action`: `hide-scratchpad` (move to scratchpad) or `noop` (default: `hide-scratchpad`)
+- `--scratchpad-workspace`: scratchpad workspace name (default: `.scratchpad`)
+- `--scratchpad-debounce`: debounce interval in milliseconds to avoid rapid hide/show (default: `200`)
+
+For detailed design and implementation notes, see [`docs/sway-scratchpad-focus.md`](docs/sway-scratchpad-focus.md).
+
 ### Sway Config Examples
 
 Add to `~/.config/sway/config`:
@@ -81,6 +110,9 @@ bindsym $mod+Shift+grave exec sway-compat cycle-backward
 # Focus stack (Alt+Tab-style)
 bindsym $mod+Tab exec sway-compat stack toggle
 exec_always sway-compat daemon
+
+# Optional: Scratchpad focus handling (macOS/AeroSpace-style)
+# exec_always sway-compat daemon --scratchpad-focus
 
 # Optional filters for the daemon
 # exec_always sway-compat daemon --exclude waybar,swaylock
@@ -128,6 +160,7 @@ sway-compat --help
 - Uses Sway IPC directly to identify focused windows and enumerate matches by `app_id`, `class`, or `instance`.
 - Cycling commands run as one-off CLI calls (scratchpad windows excluded by default).
 - The daemon listens for focus events, maintains an in-memory MRU stack, persists to JSON, and exposes a Unix socket for `stack` commands.
+- Scratchpad focus handling monitors focus changes and automatically hides scratchpad windows when tiling windows are focused in the same workspace.
 
 ## Troubleshooting
 
