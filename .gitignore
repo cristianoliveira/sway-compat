@@ -29,6 +29,7 @@ _tmp/
 .cache/
 .gocache
 bin
+dist/
 
 # Project binary
 sway-compat

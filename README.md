@@ -127,6 +127,21 @@ swaymsg reload
 
 ## Installation
 
+### Prebuilt Linux binary
+
+Download the archive for your architecture from [GitHub Releases](https://github.com/cristianoliveira/sway-compat/releases):
+
+```bash
+VERSION=0.2.0
+ARCH=amd64 # use arm64 on ARM systems
+curl -LO "https://github.com/cristianoliveira/sway-compat/releases/download/v${VERSION}/sway-compat_${VERSION}_linux_${ARCH}.tar.gz"
+curl -LO "https://github.com/cristianoliveira/sway-compat/releases/download/v${VERSION}/checksums.txt"
+sha256sum --ignore-missing --check checksums.txt
+tar -xzf "sway-compat_${VERSION}_linux_${ARCH}.tar.gz"
+sudo install -Dm755 sway-compat /usr/local/bin/sway-compat
+sway-compat --version
+```
+
 ### Nix
 
 ```bash
@@ -184,7 +199,7 @@ go test ./...
 go build -o sway-compat
 ```
 
-See `docs/` for design notes and deeper guides on cycling and stack behavior.
+See `docs/` for design notes and deeper guides on cycling and stack behavior. Maintainers can follow [`docs/releasing.md`](docs/releasing.md) to publish a release.
 
 ## License
 

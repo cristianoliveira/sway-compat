@@ -5,13 +5,12 @@ Get up and running with sway-compat in 5 minutes.
 ## TL;DR
 
 ```bash
-# Build
-git clone https://github.com/cristianoliveira/sway-compat
-cd sway-compat
-make build
-
-# Install
-sudo cp sway-compat /usr/local/bin/
+# Download a Linux release (set VERSION and ARCH as needed)
+VERSION=0.2.0
+ARCH=amd64
+curl -LO "https://github.com/cristianoliveira/sway-compat/releases/download/v${VERSION}/sway-compat_${VERSION}_linux_${ARCH}.tar.gz"
+tar -xzf "sway-compat_${VERSION}_linux_${ARCH}.tar.gz"
+sudo install -Dm755 sway-compat /usr/local/bin/sway-compat
 
 # Add to Sway config
 echo 'bindsym $mod+grave exec sway-compat cycle-forward' >> ~/.config/sway/config
@@ -36,7 +35,11 @@ swaymsg reload
 
 ## Step-by-Step Setup
 
-### 1. Build the Binary
+### 1. Install the Binary
+
+Download the archive for your architecture from [GitHub Releases](https://github.com/cristianoliveira/sway-compat/releases), extract it, and install the binary as shown above.
+
+To build from source instead:
 
 ```bash
 git clone https://github.com/cristianoliveira/sway-compat
@@ -44,7 +47,7 @@ cd sway-compat
 make build
 ```
 
-This creates a `sway-compat` binary in the current directory.
+This creates `bin/sway-compat`.
 
 ### 2. Test It Works
 
@@ -53,24 +56,23 @@ Before installing, test it manually:
 ```bash
 # Open 2-3 windows of the same app (like Firefox)
 # Then run:
-./sway-compat cycle-forward
+sway-compat cycle-forward
 ```
 
 If it switches to another window of the same app, it's working!
 
-### 3. Install the Binary
+### 3. Install a Source Build
 
-Choose one:
+If you built from source, choose one:
 
 **Option A: System-wide** (requires sudo)
 ```bash
-sudo cp sway-compat /usr/local/bin/
+sudo make install
 ```
 
 **Option B: User-only** (no sudo)
 ```bash
-mkdir -p ~/.local/bin
-cp sway-compat ~/.local/bin/
+make install-local
 # Make sure ~/.local/bin is in your PATH
 echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc
 ```

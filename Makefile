@@ -5,7 +5,7 @@ BINARY := bin/sway-compat
 export GOCACHE
 export GOLANGCI_LINT_CACHE
 
-.PHONY: help build run test test-coverage setup-ci fmt lint install clean tail-log tail-log-truncate
+.PHONY: help build run test test-coverage setup-ci fmt lint install install-local release-snapshot clean tail-log tail-log-truncate
 
 help: ## Lists the available commands. Add '##' to describe a command.
 	@grep -E '^[a-zA-Z_-].+:.*?## .*$$' $(MAKEFILE_LIST)\
@@ -49,13 +49,20 @@ lint: setup-ci ## Run the linter
 	@echo "Running linter..."
 	@golangci-lint run
 
-install: build ## Install the CLI to GOPATH/bin
-	@echo "Installing sway-compat..."
-	@go install ./...
+install: build ## Install the CLI system-wide to /usr/local/bin
+	@echo "Installing sway-compat to /usr/local/bin..."
+	@install -Dm755 $(BINARY) /usr/local/bin/sway-compat
+
+install-local: build ## Install the CLI for the current user
+	@echo "Installing sway-compat to ~/.local/bin..."
+	@install -Dm755 $(BINARY) $(HOME)/.local/bin/sway-compat
+
+release-snapshot: ## Build local release artifacts without publishing
+	@go run github.com/goreleaser/goreleaser/v2@v2.13.3 release --snapshot --clean
 
 clean: ## Clean build artifacts
 	@echo "Cleaning artifacts..."
-	@rm -f $(BINARY) coverage.out coverage.html
+	@rm -rf $(BINARY) coverage.out coverage.html dist
 
 tail-log: ## Tail the log file
 	@echo "Tailing /tmp/sway-compat.log..."

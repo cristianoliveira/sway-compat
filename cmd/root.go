@@ -7,6 +7,8 @@ import (
 	"github.com/spf13/cobra"
 )
 
+var version = "dev"
+
 var rootCmd = &cobra.Command{
 	Use:   "sway-compat",
 	Short: "Sway window manager compatibility tools",
@@ -16,7 +18,7 @@ macOS-like window cycling and stack management features.
 Features:
   - Window cycling: Cycle through windows of the same application
   - Window stack: Alt+Tab style window switching with focus history`,
-	Version: "0.1.0",
+	Version: version,
 }
 
 func Execute() {
