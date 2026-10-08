@@ -1,6 +1,7 @@
 # sway-compat
 
 macOS-style application window cycling and MRU-style focus stack for the Sway tiling window manager.
+The idea of this project is to align some UX that is only possible in macOS with AeroSpace, so I can have both systems NixOS and macOS with similar UX.
 
 ## Summary
 
