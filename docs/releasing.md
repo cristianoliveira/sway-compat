@@ -9,6 +9,8 @@ Releases are Linux binaries published by GitHub Actions. Each release contains `
    ```bash
    git switch main
    git pull --ff-only
+   git fetch origin main
+   git merge-base --is-ancestor HEAD origin/main
    go test ./...
    ```
 
