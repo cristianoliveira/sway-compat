@@ -249,6 +249,17 @@ func handleFloatingFocus(prev, curr *ipc.WindowInfo, swayClient ipc.Manager, log
 		return
 	}
 
+	marks, err := swayClient.GetMarks()
+	if err != nil {
+		log.LogError("Failed to check floating window pin state; leaving it visible", "error", err, "window_id", prev.ID)
+		return
+	}
+	for _, mark := range marks {
+		if mark == pinnedWindowMark(prev.ID) {
+			return
+		}
+	}
+
 	cmd := fmt.Sprintf("[con_id=%d] move scratchpad", prev.ID)
 	if err := swayClient.RunCommand(cmd); err != nil {
 		log.LogError("Failed to hide floating window", "error", err, "window_id", prev.ID)

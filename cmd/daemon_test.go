@@ -16,6 +16,9 @@ type mockIPCManager struct {
 	focusCalls   []int64
 	commandCalls []string
 	commandError error
+	marks        []string
+	marksError   error
+	focused      *ipc.WindowInfo
 }
 
 func newMockIPCManager() *mockIPCManager {
@@ -27,11 +30,12 @@ func newMockIPCManager() *mockIPCManager {
 
 func (m *mockIPCManager) Connect() error                             { return nil }
 func (m *mockIPCManager) GetTree() (*ipc.Tree, error)                { return nil, nil }
-func (m *mockIPCManager) GetFocusedWindow() (*ipc.WindowInfo, error) { return nil, nil }
+func (m *mockIPCManager) GetFocusedWindow() (*ipc.WindowInfo, error) { return m.focused, nil }
 func (m *mockIPCManager) Subscribe(events []string) (chan ipc.Event, error) {
 	return nil, nil
 }
 func (m *mockIPCManager) GetWindowInfo(id int64) (*ipc.WindowInfo, error) { return nil, nil }
+func (m *mockIPCManager) GetMarks() ([]string, error)                     { return m.marks, m.marksError }
 func (m *mockIPCManager) Close() error                                    { return nil }
 
 func (m *mockIPCManager) FocusWindow(id int64) error {
@@ -56,6 +60,45 @@ func TestHandleFloatingFocusHidesPreviousFloatingWindow(t *testing.T) {
 	}
 	if len(client.focusCalls) != 0 {
 		t.Fatalf("expected no re-focus, got %v", client.focusCalls)
+	}
+}
+
+func TestHandleFloatingFocusIgnoresAnotherWindowPin(t *testing.T) {
+	client := newMockIPCManager()
+	client.marks = []string{"_sway_compat_pinned_99", "other-mark"}
+	prev := &ipc.WindowInfo{ID: 10, Floating: true, Workspace: "2"}
+	curr := &ipc.WindowInfo{ID: 20, Workspace: "2"}
+
+	handleFloatingFocus(prev, curr, client, logger.GetDefaultLogger())
+
+	if len(client.commandCalls) != 1 || client.commandCalls[0] != "[con_id=10] move scratchpad" {
+		t.Fatalf("expected unpinned window to hide, got %v", client.commandCalls)
+	}
+}
+
+func TestHandleFloatingFocusKeepsPinnedWindowVisible(t *testing.T) {
+	client := newMockIPCManager()
+	client.marks = []string{"_sway_compat_pinned_10"}
+	prev := &ipc.WindowInfo{ID: 10, Floating: true, Workspace: "2"}
+	curr := &ipc.WindowInfo{ID: 20, Workspace: "2"}
+
+	handleFloatingFocus(prev, curr, client, logger.GetDefaultLogger())
+
+	if len(client.commandCalls) != 0 {
+		t.Fatalf("expected pinned window to stay visible, got %v", client.commandCalls)
+	}
+}
+
+func TestHandleFloatingFocusKeepsWindowVisibleWhenMarksUnavailable(t *testing.T) {
+	client := newMockIPCManager()
+	client.marksError = errors.New("Sway IPC unavailable")
+	prev := &ipc.WindowInfo{ID: 10, Floating: true, Workspace: "2"}
+	curr := &ipc.WindowInfo{ID: 20, Workspace: "2"}
+
+	handleFloatingFocus(prev, curr, client, logger.GetDefaultLogger())
+
+	if len(client.commandCalls) != 0 {
+		t.Fatalf("expected no hide when pin state is unknown, got %v", client.commandCalls)
 	}
 }
 

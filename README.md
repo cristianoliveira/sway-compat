@@ -91,6 +91,18 @@ Floating-to-floating focus changes and workspace switches do not hide windows.
 The flag is off by default. If both focus flags are set, this one takes
 precedence over `--scratchpad-focus`.
 
+To keep a floating window visible, focus it and pin it:
+
+```bash
+sway-compat pin             # keep this window visible
+sway-compat unpin           # allow this window to hide again
+```
+
+Pinning uses a hidden Sway mark on that window, so it survives daemon restarts
+but ends when the window closes. These commands work without the daemon running.
+To unpin a window that is already hidden, show it first with
+`swaymsg scratchpad show`, focus it, then run `sway-compat unpin`.
+
 ### Scratchpad Focus Handling
 
 Replicate macOS/AeroSpace behavior where scratchpad windows automatically hide when you focus a tiling window in the same workspace:
@@ -133,6 +145,8 @@ exec_always sway-compat daemon
 
 # Optional: hide the previous floating window when a tiled window gains focus
 # exec_always sway-compat daemon --hide-floating-on-focus
+# bindsym $mod+Shift+p exec sway-compat pin
+# bindsym $mod+Shift+u exec sway-compat unpin
 
 # Optional: scratchpad-only focus handling instead
 # exec_always sway-compat daemon --scratchpad-focus

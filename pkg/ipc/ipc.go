@@ -25,6 +25,9 @@ type Manager interface {
 	// GetWindowInfo returns detailed window information including workspace
 	GetWindowInfo(id int64) (*WindowInfo, error)
 
+	// GetMarks returns Sway window marks (used to identify pinned windows)
+	GetMarks() ([]string, error)
+
 	// Close closes the IPC connection
 	Close() error
 }

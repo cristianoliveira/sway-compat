@@ -36,6 +36,8 @@ func (m *MockIPCManager) FocusWindow(id int64) error {
 	return nil
 }
 
+func (m *MockIPCManager) GetMarks() ([]string, error) { return nil, nil }
+
 func (m *MockIPCManager) RunCommand(cmd string) error {
 	return nil
 }

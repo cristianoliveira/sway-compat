@@ -126,6 +126,8 @@ func (m *MockIPCClient) FocusWindow(id int64) error {
 	return nil
 }
 
+func (m *MockIPCClient) GetMarks() ([]string, error) { return nil, nil }
+
 func (m *MockIPCClient) RunCommand(cmd string) error {
 	return nil
 }

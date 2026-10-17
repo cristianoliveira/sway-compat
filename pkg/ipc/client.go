@@ -107,6 +107,15 @@ func (c *Client) RunCommand(cmd string) error {
 	return nil
 }
 
+// GetMarks returns the current Sway window marks.
+func (c *Client) GetMarks() ([]string, error) {
+	marks, err := c.commandClient.GetMarks()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get Sway marks: %w", err)
+	}
+	return marks, nil
+}
+
 // GetWindowInfo returns detailed window information including workspace
 func (c *Client) GetWindowInfo(id int64) (*WindowInfo, error) {
 	c.log.LogDebug("Getting window info", "window_id", id)
