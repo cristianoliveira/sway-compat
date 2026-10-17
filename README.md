@@ -72,6 +72,25 @@ Useful flags:
 - `--stack-size <n>`: limit tracked windows (default `20`)
 - `--exclude <apps>` / `--include-only <apps>`: comma-separated filters for app IDs
 
+### Hide Floating Windows on Tiled Focus
+
+Sway always places floating windows above tiled windows. To reveal a tiled window
+when it gains focus behind a floating window, opt in to hiding the **previously
+focused** floating window:
+
+```bash
+sway-compat daemon --hide-floating-on-focus
+```
+
+When a floating window loses focus to a tiled window in the **same workspace**,
+the daemon moves that floating window to Sway's scratchpad. This applies to
+ordinary floating windows as well as scratchpad windows. The tiled window stays
+tiled. Restore the most recently hidden window with `swaymsg scratchpad show`
+(or your existing scratchpad keybinding). Other floating windows are not hidden.
+Floating-to-floating focus changes and workspace switches do not hide windows.
+The flag is off by default. If both focus flags are set, this one takes
+precedence over `--scratchpad-focus`.
+
 ### Scratchpad Focus Handling
 
 Replicate macOS/AeroSpace behavior where scratchpad windows automatically hide when you focus a tiling window in the same workspace:
@@ -112,7 +131,10 @@ bindsym $mod+Shift+grave exec sway-compat cycle-backward
 bindsym $mod+Tab exec sway-compat stack toggle
 exec_always sway-compat daemon
 
-# Optional: Scratchpad focus handling (macOS/AeroSpace-style)
+# Optional: hide the previous floating window when a tiled window gains focus
+# exec_always sway-compat daemon --hide-floating-on-focus
+
+# Optional: scratchpad-only focus handling instead
 # exec_always sway-compat daemon --scratchpad-focus
 
 # Optional filters for the daemon

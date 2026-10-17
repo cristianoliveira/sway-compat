@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/cristianoliveira/sway-compat/internal/logger"
@@ -14,6 +15,7 @@ func init() {
 type mockIPCManager struct {
 	focusCalls   []int64
 	commandCalls []string
+	commandError error
 }
 
 func newMockIPCManager() *mockIPCManager {
@@ -39,7 +41,63 @@ func (m *mockIPCManager) FocusWindow(id int64) error {
 
 func (m *mockIPCManager) RunCommand(cmd string) error {
 	m.commandCalls = append(m.commandCalls, cmd)
-	return nil
+	return m.commandError
+}
+
+func TestHandleFloatingFocusHidesPreviousFloatingWindow(t *testing.T) {
+	client := newMockIPCManager()
+	prev := &ipc.WindowInfo{ID: 10, Floating: true, Scratchpad: "none", Workspace: "2"}
+	curr := &ipc.WindowInfo{ID: 20, Workspace: "2"}
+
+	handleFloatingFocus(prev, curr, client, logger.GetDefaultLogger())
+
+	if len(client.commandCalls) != 1 || client.commandCalls[0] != "[con_id=10] move scratchpad" {
+		t.Fatalf("expected previous floating window to move to scratchpad, got %v", client.commandCalls)
+	}
+	if len(client.focusCalls) != 0 {
+		t.Fatalf("expected no re-focus, got %v", client.focusCalls)
+	}
+}
+
+func TestHandleFloatingFocusSkipsOtherTransitions(t *testing.T) {
+	tests := []struct {
+		name string
+		prev *ipc.WindowInfo
+		curr *ipc.WindowInfo
+	}{
+		{"no previous window", nil, &ipc.WindowInfo{ID: 20, Workspace: "2"}},
+		{"previous tiled", &ipc.WindowInfo{ID: 10, Workspace: "2"}, &ipc.WindowInfo{ID: 20, Workspace: "2"}},
+		{"current floating", &ipc.WindowInfo{ID: 10, Floating: true, Workspace: "2"}, &ipc.WindowInfo{ID: 20, Floating: true, Workspace: "2"}},
+		{"different workspace", &ipc.WindowInfo{ID: 10, Floating: true, Workspace: "1"}, &ipc.WindowInfo{ID: 20, Workspace: "2"}},
+		{"missing previous workspace", &ipc.WindowInfo{ID: 10, Floating: true}, &ipc.WindowInfo{ID: 20, Workspace: "2"}},
+		{"missing current workspace", &ipc.WindowInfo{ID: 10, Floating: true, Workspace: "2"}, &ipc.WindowInfo{ID: 20}},
+		{"same window", &ipc.WindowInfo{ID: 10, Floating: true, Workspace: "2"}, &ipc.WindowInfo{ID: 10, Workspace: "2"}},
+		{"no previous window id", &ipc.WindowInfo{Floating: true, Workspace: "2"}, &ipc.WindowInfo{ID: 20, Workspace: "2"}},
+		{"no current window id", &ipc.WindowInfo{ID: 10, Floating: true, Workspace: "2"}, &ipc.WindowInfo{Workspace: "2"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			client := newMockIPCManager()
+			handleFloatingFocus(tt.prev, tt.curr, client, logger.GetDefaultLogger())
+			if len(client.commandCalls) != 0 {
+				t.Fatalf("expected no command, got %v", client.commandCalls)
+			}
+		})
+	}
+}
+
+func TestHandleFloatingFocusDoesNotRefocusWhenCommandFails(t *testing.T) {
+	client := newMockIPCManager()
+	client.commandError = errors.New("sway command failed")
+	prev := &ipc.WindowInfo{ID: 10, Floating: true, Workspace: "2"}
+	curr := &ipc.WindowInfo{ID: 20, Workspace: "2"}
+
+	handleFloatingFocus(prev, curr, client, logger.GetDefaultLogger())
+
+	if len(client.commandCalls) != 1 || len(client.focusCalls) != 0 {
+		t.Fatalf("expected one attempted command and no focus change, got commands %v, focus %v", client.commandCalls, client.focusCalls)
+	}
 }
 
 func TestHandleScratchpadFocusSkipsWhenWorkspaceDiffers(t *testing.T) {

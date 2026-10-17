@@ -16,10 +16,11 @@ import (
 )
 
 var (
-	daemonDBPath      string
-	daemonStackSize   int
-	daemonExcludeApps []string
-	daemonIncludeOnly []string
+	daemonDBPath              string
+	daemonStackSize           int
+	daemonExcludeApps         []string
+	daemonIncludeOnly         []string
+	daemonHideFloatingOnFocus bool
 
 	// Scratchpad focus configuration
 	daemonScratchpadFocusEnabled bool
@@ -125,7 +126,7 @@ func runDaemon(cmd *cobra.Command, args []string) {
 	fmt.Printf("  - Storage: %s\n", dbPath)
 	fmt.Println("Press Ctrl+C to stop.")
 
-	// Track previous window for scratchpad focus handling
+	// Track previous window for floating-window focus handling
 	var prevWindow *ipc.WindowInfo
 	var lastScratchpadAction time.Time
 
@@ -157,15 +158,17 @@ func runDaemon(cmd *cobra.Command, args []string) {
 					// Push to stack
 					manager.Push(*enrichedWindow)
 
-					// Scratchpad focus handling
-					if daemonScratchpadFocusEnabled && prevWindow != nil {
-						// Debounce check
-						debounceInterval := time.Duration(daemonScratchpadDebounce) * time.Millisecond
-						if time.Since(lastScratchpadAction) > debounceInterval {
-							// Enrich previous window info if needed
-							enrichedPrev := enrichWindowInfo(prevWindow, swayClient, log)
-							handleScratchpadFocus(enrichedPrev, enrichedWindow, swayClient, log)
-							lastScratchpadAction = time.Now()
+					// General floating-window handling takes precedence over scratchpad-only handling.
+					if prevWindow != nil && (daemonHideFloatingOnFocus || daemonScratchpadFocusEnabled) {
+						enrichedPrev := enrichWindowInfo(prevWindow, swayClient, log)
+						if daemonHideFloatingOnFocus {
+							handleFloatingFocus(enrichedPrev, enrichedWindow, swayClient, log)
+						} else {
+							debounceInterval := time.Duration(daemonScratchpadDebounce) * time.Millisecond
+							if time.Since(lastScratchpadAction) > debounceInterval {
+								handleScratchpadFocus(enrichedPrev, enrichedWindow, swayClient, log)
+								lastScratchpadAction = time.Now()
+							}
 						}
 					}
 
@@ -234,6 +237,24 @@ func enrichWindowInfo(window *ipc.WindowInfo, swayClient ipc.Manager, log logger
 	}
 
 	return window
+}
+
+// handleFloatingFocus hides the previous floating window when a tiled window takes focus.
+// Sway keeps floating windows above tiled windows, even when the tiled window has focus.
+func handleFloatingFocus(prev, curr *ipc.WindowInfo, swayClient ipc.Manager, log logger.Logger) {
+	if prev == nil || curr == nil || prev.ID <= 0 || curr.ID <= 0 || prev.ID == curr.ID {
+		return
+	}
+	if !prev.Floating || curr.Floating || prev.Workspace == "" || prev.Workspace != curr.Workspace {
+		return
+	}
+
+	cmd := fmt.Sprintf("[con_id=%d] move scratchpad", prev.ID)
+	if err := swayClient.RunCommand(cmd); err != nil {
+		log.LogError("Failed to hide floating window", "error", err, "window_id", prev.ID)
+		return
+	}
+	log.LogDebug("Moved floating window to scratchpad", "window_id", prev.ID, "workspace", prev.Workspace)
 }
 
 // handleScratchpadFocus implements the scratchpad focus behavior described in docs/sway-scratchpad-focus.md
@@ -339,6 +360,10 @@ func init() {
 		"App IDs to exclude from stack (comma-separated)")
 	daemonCmd.Flags().StringSliceVar(&daemonIncludeOnly, "include-only", []string{},
 		"Only track these app IDs (comma-separated, empty means track all)")
+
+	// Floating-window focus flags
+	daemonCmd.Flags().BoolVar(&daemonHideFloatingOnFocus, "hide-floating-on-focus", false,
+		"Move the previously focused floating window to scratchpad when a tiled window gains focus in the same workspace")
 
 	// Scratchpad focus flags
 	daemonCmd.Flags().BoolVar(&daemonScratchpadFocusEnabled, "scratchpad-focus", false,
